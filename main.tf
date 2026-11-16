@@ -36,7 +36,7 @@ resource "docker_image" "web_app" {
 
   build {
     context    = path.module
-    dockerfile = "Dockerfile"
+    dockerfile = "Dockerfile_app"
   }
 }
 

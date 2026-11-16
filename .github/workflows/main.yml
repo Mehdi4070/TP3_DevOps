@@ -9,6 +9,7 @@ jobs:
   terraform:
     name: "Terraform DLC"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       # Récupération du code source depuis le dépôt
@@ -19,15 +20,37 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
       # Initialisation de l'état
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        run: terraform validate
 
       # Validation & Revue (Détection des changements)
       - name: Terraform Plan
-        run: terraform plan
+        run: terraform plan -input=false -out=tfplan
 
       # Déploiement Continu (Application des changements)
-      # Cette étape ne s'exécutera que si le "Terraform Plan" a réussi (comportement par défaut des GitHub Actions)
       - name: Terraform Apply
-        run: terraform apply -auto-approve
+        if: success()
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Validate Web Application
+        run: |
+          for attempt in {1..15}; do
+            if curl --fail --silent http://localhost:8080/ | grep --quiet "Application Deployed via Terraform IaC!"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Validate PostgreSQL
+        run: docker exec tp-iac-postgres pg_isready -U tp_user -d tp_database
+
+      - name: Terraform Outputs
+        run: terraform output

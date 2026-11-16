@@ -1,0 +1,220 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\geometry{margin=2.2cm}
+\hypersetup{colorlinks=true,urlcolor=blue,linkcolor=black}
+\definecolor{codebg}{RGB}{245,247,250}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false
+}
+
+\title{Travaux Pratiques : Infrastructure as Code\\et pipeline CI/CD}
+\author{Mehdi\\Dépôt : \url{https://github.com/Mehdi4070/TP3_DevOps}}
+\date{16 novembre 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Objectif}
+
+L'objectif du TP est de décrire une infrastructure locale sous forme de code avec
+Terraform, puis d'automatiser son cycle de déploiement dans GitHub Actions.
+L'infrastructure obtenue contient :
+
+\begin{itemize}[noitemsep]
+  \item un conteneur PostgreSQL construit à partir de \texttt{postgres:latest} ;
+  \item une application Web Nginx construite depuis \texttt{Dockerfile\_app} ;
+  \item le port PostgreSQL interne 5432 publié sur le port 5432 ;
+  \item le port HTTP interne 80 publié sur le port 8080.
+\end{itemize}
+
+\section{Structure et choix techniques}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+Fichier & Rôle \\
+\midrule
+\texttt{main.tf} & Provider Docker, images et conteneurs \\
+\texttt{variables.tf} & Identifiants PostgreSQL et ports configurables \\
+\texttt{outputs.tf} & URL, endpoint et noms des ressources \\
+\texttt{Dockerfile\_app} & Image Alpine légère avec Nginx \\
+\texttt{nginx.default.conf} & Virtual host servant la page de validation \\
+\texttt{.github/workflows/main.yml} & Pipeline Terraform automatique \\
+\texttt{.gitignore} & Exclusion de l'état et des fichiers sensibles \\
+\bottomrule
+\end{tabular}
+
+Le provider utilisé est \texttt{kreuzwerker/docker} en version compatible
+\texttt{\textasciitilde> 3.0}. Le mot de passe est déclaré comme variable sensible afin
+qu'il soit masqué dans les sorties Terraform. L'application dépend explicitement du
+conteneur PostgreSQL avec \texttt{depends\_on}.
+
+\section{Conteneurisation de l'application}
+
+Le fichier \texttt{Dockerfile\_app} utilise \texttt{alpine:latest}, installe Nginx sans
+conserver le cache APK, crée la page demandée et démarre Nginx au premier plan.
+
+\begin{lstlisting}
+FROM alpine:latest
+RUN apk add --no-cache nginx
+RUN mkdir -p /var/www/localhost/htdocs /run/nginx && \
+    echo "<h1>Application Deployed via Terraform IaC!</h1>" \
+    > /var/www/localhost/htdocs/index.html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+\end{lstlisting}
+
+\section{Exécution du cycle de vie du déploiement}
+
+Les validations ci-dessous ont été exécutées le 16 novembre 2026 avec Terraform
+1.17.2 et le provider Docker 3.9.0. Les ports 8080 et 5432 étaient déjà occupés par
+d'autres services sur le poste de test. Pour ne pas interrompre ces services, le test
+local a utilisé temporairement 18080 et 15432 via \texttt{-var}. Les valeurs par défaut
+du projet restent bien 8080 et 5432 ; elles sont utilisées et validées dans GitHub
+Actions.
+
+\subsection{Initialisation}
+
+\begin{lstlisting}
+terraform init -input=false
+\end{lstlisting}
+
+Résultat : backend initialisé et provider
+\texttt{kreuzwerker/docker v3.9.0} installé avec succès. La configuration a ensuite été
+contrôlée avec \texttt{terraform fmt -check} et \texttt{terraform validate} ; le résultat
+était \texttt{Success! The configuration is valid.}
+
+\subsection{Planification}
+
+\begin{lstlisting}
+terraform plan -out=tfplan \
+  -var='postgres_external_port=15432' \
+  -var='app_external_port=18080'
+\end{lstlisting}
+
+Résultat : \texttt{Plan: 4 to add, 0 to change, 0 to destroy}. Les quatre ressources
+prévues étaient les deux images et les deux conteneurs Docker.
+
+\subsection{Application}
+
+\begin{lstlisting}
+terraform apply -auto-approve tfplan
+\end{lstlisting}
+
+Résultat : les conteneurs \texttt{tp-iac-postgres} et \texttt{tp-iac-webapp} ont été
+créés et démarrés. Les sorties confirmaient notamment :
+
+\begin{lstlisting}
+postgres_container_name = "tp-iac-postgres"
+postgres_endpoint       = "localhost:15432"
+web_app_container_name  = "tp-iac-webapp"
+web_app_url             = "http://localhost:18080"
+\end{lstlisting}
+
+Un second \texttt{terraform plan} a retourné \texttt{No changes}, ce qui démontre
+l'idempotence et la concordance entre l'état réel et la configuration.
+
+\subsection{Validation des services}
+
+La requête HTTP a retourné \texttt{HTTP/1.1 200 OK} ainsi que le contenu exact demandé :
+
+\begin{lstlisting}
+<h1>Application Deployed via Terraform IaC!</h1>
+\end{lstlisting}
+
+La base a été contrôlée depuis son conteneur :
+
+\begin{lstlisting}
+docker exec tp-iac-postgres \
+  pg_isready -U tp_user -d tp_database
+/var/run/postgresql:5432 - accepting connections
+\end{lstlisting}
+
+\subsection{Destruction}
+
+\begin{lstlisting}
+terraform destroy -auto-approve \
+  -var='postgres_external_port=15432' \
+  -var='app_external_port=18080'
+\end{lstlisting}
+
+Résultat : \texttt{Destroy complete! Resources: 4 destroyed.} La liste des ressources
+de l'état et la recherche des conteneurs du TP étaient toutes deux vides après la
+commande.
+
+\section{Pipeline CI/CD}
+
+Le workflow \texttt{.github/workflows/main.yml} se déclenche automatiquement lors de
+chaque \texttt{push} vers \texttt{main}. Il exécute dans l'ordre : checkout, installation
+de Terraform, contrôle du format, Init, Validate, Plan, Apply, validation HTTP,
+validation PostgreSQL et affichage des outputs.
+
+Le plan est enregistré dans \texttt{tfplan} puis fourni à Apply. De plus, Apply possède
+la condition explicite \texttt{if: success()}, donc il ne peut être exécuté que si toutes
+les étapes précédentes, en particulier Plan, ont réussi. Le workflow teste aussi le
+texte de la page sur \url{http://localhost:8080/} et l'état de PostgreSQL.
+
+La variable \texttt{postgres\_password} a fait l'objet d'une modification dédiée dans
+l'historique initial du projet et le pipeline associé avait réussi. La version finale
+est vérifiable dans l'onglet Actions du dépôt :
+\url{https://github.com/Mehdi4070/TP3_DevOps/actions}.
+
+\section{Réponses aux questions d'approfondissement}
+
+\subsection{Impact de \texttt{terraform destroy} sur l'état}
+
+\texttt{terraform.tfstate} est l'inventaire de correspondance entre les adresses des
+ressources Terraform et les objets réellement gérés. Lors d'un Destroy, Terraform lit
+cet état pour identifier les objets à supprimer, demande leur destruction au provider,
+puis retire de l'état les ressources supprimées. Le fichier peut encore exister après
+l'opération, mais il ne contient plus les ressources détruites. L'état permet donc la
+réconciliation : Terraform compare la configuration souhaitée, l'état connu et les
+informations relues depuis l'infrastructure afin de calculer les actions nécessaires.
+
+\subsection{Immuabilité de l'infrastructure}
+
+L'immuabilité signifie qu'une ressource déployée n'est pas modifiée manuellement et
+progressivement. Lorsqu'un changement incompatible est nécessaire, on produit une
+nouvelle version décrite par le code et on remplace l'ancienne ressource. Cette approche
+réduit la dérive de configuration, rend les déploiements reproductibles et facilite le
+retour à une version précédente. Terraform décide selon les capacités du provider si un
+champ peut être modifié sur place ou s'il impose un remplacement.
+
+\subsection{Pourquoi Plan est une gate essentielle}
+
+Plan affiche à l'avance les créations, modifications, remplacements et destructions. Il
+permet de détecter une erreur de variable, une suppression inattendue, une dérive ou un
+impact trop important avant tout changement réel. En production, le plan peut être
+archivé et soumis à validation humaine ou à des règles automatiques. Appliquer le plan
+enregistré garantit ensuite que l'action validée est bien celle qui est exécutée.
+
+\subsection{Création d'un réseau Docker}
+
+La ressource à ajouter est \texttt{docker\_network}. Il faudrait ensuite connecter les
+deux conteneurs à ce réseau, par exemple avec leur bloc \texttt{networks\_advanced}.
+L'application pourrait alors joindre PostgreSQL par son nom ou son alias sur le réseau
+privé, sans dépendre du port publié sur l'hôte.
+
+\section{Conclusion}
+
+Le TP met en œuvre le cycle complet Init, Plan, Apply, Validate et Destroy. La
+configuration est valide, reproductible et idempotente. L'application et PostgreSQL ont
+été testés réellement, et le même processus est automatisé sur chaque push vers
+\texttt{main} avec une gate explicite avant Apply.
+
+\end{document}

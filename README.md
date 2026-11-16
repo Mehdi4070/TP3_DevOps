@@ -1,6 +1,7 @@
-# IaC-Local
+# TP3 DevOps — Infrastructure as Code
 
-Practical DevOps lab for building and automating infrastructure with Terraform and CI/CD.
+TP d'Infrastructure as Code utilisant Terraform pour orchestrer localement PostgreSQL et
+une application Nginx, avec automatisation par GitHub Actions.
 ## Lab Overview
 
 This project provisions a local infrastructure using Terraform and Docker:
@@ -8,6 +9,9 @@ This project provisions a local infrastructure using Terraform and Docker:
 - Nginx-based web container (simple app endpoint)
 
 The same deployment lifecycle is automated in GitHub Actions on each push to `main`.
+
+Le compte rendu complet est disponible dans `RAPPORT_TP_IAC.pdf` et sa source dans
+`RAPPORT_TP_IAC.tex`.
 
 ## Tech Stack
 

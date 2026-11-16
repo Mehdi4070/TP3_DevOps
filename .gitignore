@@ -29,3 +29,12 @@ terraform.rc
 # OS or Editor
 .vscode/
 .DS_Store
+
+# Original subject distributed separately (not part of the submitted report)
+TP IaC Local .pdf
+
+# LaTeX build artefacts (the source and final PDF remain tracked)
+*.aux
+*.log
+*.out
+*.toc
